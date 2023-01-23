@@ -1,4 +1,4 @@
-module github.com/BluReX/ice
+module github.com/BlureX/ice
 
 go 1.13
 
