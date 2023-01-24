@@ -2,6 +2,8 @@ package ice
 
 import (
 	"fmt"
+	"sync/atomic"
+	"time"
 
 	"github.com/pion/stun"
 )
@@ -23,6 +25,20 @@ type candidatePair struct {
 	bindingRequestCount uint16
 	state               CandidatePairState
 	nominated           bool
+
+	// The following fields are for generating candidate pair statistics, and need to be accessed through atomics.
+	// The durations are stored as int64 to be used with atomic.AddInt64 and atomic.LoadInt64
+	requestsSent              uint64
+	responsesReceived         uint64
+	currentRoundTripTimeNanos int64
+	totalRoundTripTimeNanos   int64
+}
+
+func (p *candidatePair) updateStatsFromSuccessResponse(requestTimestamp time.Time) {
+	roundTripTime := time.Since(requestTimestamp)
+	atomic.StoreInt64(&p.currentRoundTripTimeNanos, roundTripTime.Nanoseconds())
+	atomic.AddInt64(&p.totalRoundTripTimeNanos, roundTripTime.Nanoseconds())
+	atomic.AddUint64(&p.responsesReceived, 1)
 }
 
 func (p *candidatePair) String() string {

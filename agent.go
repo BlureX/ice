@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/pion/logging"
 	"github.com/pion/mdns"
 	"github.com/pion/stun"
@@ -453,6 +454,14 @@ func NewAgent(config *AgentConfig) (*Agent, error) {
 	if !a.trickle {
 		<-a.gatherCandidates()
 	}
+
+	go func() {
+		for {
+			<-time.After(5 * time.Second)
+			stats := a.GetCandidatePairsStats()
+			spew.Dump("STATS: ", stats)
+		}
+	}()
 	return a, nil
 }
 
@@ -697,7 +706,7 @@ func (a *Agent) pingAllCandidates() {
 			a.log.Tracef("max requests reached for pair %s, marking it as failed\n", p)
 			p.state = CandidatePairStateFailed
 		} else {
-			a.selector.PingCandidate(p.local, p.remote)
+			a.selector.PingCandidate(p)
 			p.bindingRequestCount++
 		}
 	}
@@ -780,7 +789,7 @@ func (a *Agent) checkKeepalive() {
 		(time.Since(selectedPair.local.LastSent()) > a.keepaliveInterval) {
 		// we use binding request instead of indication to support refresh consent schemas
 		// see https://tools.ietf.org/html/rfc7675
-		a.selector.PingCandidate(selectedPair.local, selectedPair.remote)
+		a.selector.PingCandidate(selectedPair)
 	}
 }
 
@@ -988,7 +997,9 @@ func (a *Agent) findRemoteCandidate(networkType NetworkType, addr net.Addr) Cand
 	return nil
 }
 
-func (a *Agent) sendBindingRequest(m *stun.Message, local, remote Candidate) {
+func (a *Agent) sendBindingRequest(m *stun.Message, p *candidatePair) {
+	local := p.local
+	remote := p.remote
 	a.log.Tracef("ping STUN from %s to %s\n", local.String(), remote.String())
 
 	a.invalidatePendingBindingRequests(time.Now())
@@ -998,6 +1009,8 @@ func (a *Agent) sendBindingRequest(m *stun.Message, local, remote Candidate) {
 		destination:    remote.addr(),
 		isUseCandidate: m.Contains(stun.AttrUseCandidate),
 	})
+
+	atomic.AddUint64(&p.requestsSent, 1)
 
 	a.sendSTUN(m, local, remote)
 }
@@ -1184,11 +1197,15 @@ func (a *Agent) GetCandidatePairsStats() []CandidatePairStats {
 		result := make([]CandidatePairStats, 0, len(agent.checklist))
 		for _, cp := range agent.checklist {
 			stat := CandidatePairStats{
-				Timestamp:         time.Now(),
-				LocalCandidateID:  cp.local.ID(),
-				RemoteCandidateID: cp.remote.ID(),
-				State:             cp.state,
-				Nominated:         cp.nominated,
+				Timestamp:            time.Now(),
+				LocalCandidateID:     cp.local.ID(),
+				RemoteCandidateID:    cp.remote.ID(),
+				State:                cp.state,
+				Nominated:            cp.nominated,
+				TotalRoundTripTime:   time.Duration(atomic.LoadInt64(&cp.totalRoundTripTimeNanos)).Seconds(),
+				CurrentRoundTripTime: time.Duration(atomic.LoadInt64(&cp.currentRoundTripTimeNanos)).Seconds(),
+				RequestsSent:         atomic.LoadUint64(&cp.requestsSent),
+				ResponsesReceived:    atomic.LoadUint64(&cp.responsesReceived),
 				// PacketsSent uint32
 				// PacketsReceived uint32
 				// BytesSent uint64

@@ -11,7 +11,7 @@ import (
 type pairCandidateSelector interface {
 	Start()
 	ContactCandidates()
-	PingCandidate(local, remote Candidate)
+	PingCandidate(pair *candidatePair)
 	HandleSuccessResponse(m *stun.Message, local, remote Candidate, remoteAddr net.Addr)
 	HandleBindingRequest(m *stun.Message, local, remote Candidate)
 }
@@ -116,7 +116,7 @@ func (s *controllingSelector) nominatePair(pair *candidatePair) {
 	}
 
 	s.log.Tracef("ping STUN (nominate candidate pair) from %s to %s\n", pair.local.String(), pair.remote.String())
-	s.agent.sendBindingRequest(msg, pair.local, pair.remote)
+	s.agent.sendBindingRequest(msg, pair)
 	s.nominationRequestCount++
 }
 
@@ -169,13 +169,15 @@ func (s *controllingSelector) HandleSuccessResponse(m *stun.Message, local, remo
 	}
 
 	p.state = CandidatePairStateSucceeded
+	p.updateStatsFromSuccessResponse(pendingRequest.timestamp)
 	s.log.Tracef("Found valid candidate pair: %s", p)
 	if pendingRequest.isUseCandidate && s.agent.getSelectedPair() == nil {
 		s.agent.setSelectedPair(p)
 	}
 }
 
-func (s *controllingSelector) PingCandidate(local, remote Candidate) {
+func (s *controllingSelector) PingCandidate(pair *candidatePair) {
+	local := pair.local
 	msg, err := stun.Build(stun.BindingRequest, stun.TransactionID,
 		stun.NewUsername(s.agent.remoteUfrag+":"+s.agent.localUfrag),
 		AttrControlling(s.agent.tieBreaker),
@@ -189,7 +191,7 @@ func (s *controllingSelector) PingCandidate(local, remote Candidate) {
 		return
 	}
 
-	s.agent.sendBindingRequest(msg, local, remote)
+	s.agent.sendBindingRequest(msg, pair)
 }
 
 type controlledSelector struct {
@@ -218,11 +220,11 @@ func (s *controlledSelector) ContactCandidates() {
 	}
 }
 
-func (s *controlledSelector) PingCandidate(local, remote Candidate) {
+func (s *controlledSelector) PingCandidate(p *candidatePair) {
 	msg, err := stun.Build(stun.BindingRequest, stun.TransactionID,
 		stun.NewUsername(s.agent.remoteUfrag+":"+s.agent.localUfrag),
 		AttrControlled(s.agent.tieBreaker),
-		PriorityAttr(local.Priority()),
+		PriorityAttr(p.local.Priority()),
 		stun.NewShortTermIntegrity(s.agent.remotePwd),
 		stun.Fingerprint,
 	)
@@ -232,7 +234,7 @@ func (s *controlledSelector) PingCandidate(local, remote Candidate) {
 		return
 	}
 
-	s.agent.sendBindingRequest(msg, local, remote)
+	s.agent.sendBindingRequest(msg, p)
 }
 
 func (s *controlledSelector) HandleSuccessResponse(m *stun.Message, local, remote Candidate, remoteAddr net.Addr) {
@@ -268,6 +270,7 @@ func (s *controlledSelector) HandleSuccessResponse(m *stun.Message, local, remot
 	}
 
 	p.state = CandidatePairStateSucceeded
+	p.updateStatsFromSuccessResponse(pendingRequest.timestamp)
 	s.log.Tracef("Found valid candidate pair: %s", p)
 }
 
@@ -301,11 +304,11 @@ func (s *controlledSelector) HandleBindingRequest(m *stun.Message, local, remote
 			// MUST remove the candidate pair from the valid list, set the
 			// candidate pair state to Failed, and set the checklist state to
 			// Failed.
-			s.PingCandidate(local, remote)
+			s.PingCandidate(p)
 		}
 	} else {
 		s.agent.sendBindingSuccess(m, local, remote)
-		s.PingCandidate(local, remote)
+		s.PingCandidate(p)
 	}
 }
 
