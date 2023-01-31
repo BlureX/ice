@@ -32,6 +32,21 @@ type candidatePair struct {
 	responsesReceived         uint64
 	currentRoundTripTimeNanos int64
 	totalRoundTripTimeNanos   int64
+	lastStunRequestSent       atomic.Value
+}
+
+// lastStunRequestSent returns a time.Time indicating the last time
+// this candidate made a stun request
+func (c *candidatePair) LastStunRequestSent() time.Time {
+	lastStunRequestSent := c.lastStunRequestSent.Load()
+	if lastStunRequestSent == nil {
+		return time.Time{}
+	}
+	return lastStunRequestSent.(time.Time)
+}
+
+func (c *candidatePair) SetLastStunRequestSent(t time.Time) {
+	c.lastStunRequestSent.Store(t)
 }
 
 func (p *candidatePair) updateStatsFromSuccessResponse(requestTimestamp time.Time) {

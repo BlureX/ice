@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/pion/logging"
 	"github.com/pion/mdns"
 	"github.com/pion/stun"
@@ -455,13 +454,6 @@ func NewAgent(config *AgentConfig) (*Agent, error) {
 		<-a.gatherCandidates()
 	}
 
-	go func() {
-		for {
-			<-time.After(5 * time.Second)
-			stats := a.GetCandidatePairsStats()
-			spew.Dump("STATS: ", stats)
-		}
-	}()
 	return a, nil
 }
 
@@ -786,7 +778,7 @@ func (a *Agent) checkKeepalive() {
 	}
 
 	if (a.keepaliveInterval != 0) &&
-		(time.Since(selectedPair.local.LastSent()) > a.keepaliveInterval) {
+		(time.Since(selectedPair.local.LastSent()) > a.keepaliveInterval || time.Since(selectedPair.LastStunRequestSent()) > a.keepaliveInterval) {
 		// we use binding request instead of indication to support refresh consent schemas
 		// see https://tools.ietf.org/html/rfc7675
 		a.selector.PingCandidate(selectedPair)
@@ -1011,6 +1003,7 @@ func (a *Agent) sendBindingRequest(m *stun.Message, p *candidatePair) {
 	})
 
 	atomic.AddUint64(&p.requestsSent, 1)
+	p.SetLastStunRequestSent(time.Now())
 
 	a.sendSTUN(m, local, remote)
 }
